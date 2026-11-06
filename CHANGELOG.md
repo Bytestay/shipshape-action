@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.6](https://github.com/Bytestay/shipshape-action/compare/v1.0.5...v1.0.6) (2026-11-06)
+
+
+### Bug Fixes
+
+* unique Marketplace name, ByteStay Shipshape ([#3](https://github.com/Bytestay/shipshape-action/issues/3)) ([1c8abdb](https://github.com/Bytestay/shipshape-action/commit/1c8abdbc89369e632f22d5051310835799ad2e6c))
+
 ## [1.0.5](https://github.com/Bytestay/shipshape-action/compare/v1.0.4...v1.0.5) (2026-11-06)
 
 
