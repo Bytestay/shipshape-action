@@ -3,7 +3,7 @@
 [![CI](https://github.com/bytestay/shipshape-action/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/bytestay/shipshape-action/actions/workflows/ci.yml)
 [![E2E](https://github.com/bytestay/shipshape-action/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/bytestay/shipshape-action/actions/workflows/e2e.yml)
 [![Release](https://img.shields.io/github/v/release/bytestay/shipshape-action)](https://github.com/bytestay/shipshape-action/releases)
-[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-shipshape-blue?logo=github)](https://github.com/marketplace/actions/shipshape-dockerfile-kubernetes-lint)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-shipshape-blue?logo=github)](https://github.com/marketplace/actions/bytestay-shipshape-dockerfile-kubernetes-lint)
 [![License: MIT](https://img.shields.io/github/license/bytestay/shipshape-action)](LICENSE)
 
 Lint the **Dockerfiles and Kubernetes manifests** a pull request changes, right on the diff:
