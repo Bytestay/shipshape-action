@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.5](https://github.com/Bytestay/shipshape-action/compare/v1.0.4...v1.0.5) (2026-11-06)
+
+
+### Miscellaneous Chores
+
+* release 1.0.5 for the Marketplace listing ([#1](https://github.com/Bytestay/shipshape-action/issues/1)) ([26febbb](https://github.com/Bytestay/shipshape-action/commit/26febbb193af159d4658e0885d7e454185218125))
+
 ## [1.0.4](https://github.com/hybridforgelab/shipshape-action/compare/v1.0.3...v1.0.4) (2026-11-05)
 
 
