@@ -1,0 +1,18 @@
+name: Archived legacy uses test
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  legacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shipshape (archived hybridforgelab repo)
+        uses: hybridforgelab/shipshape-action@v1
+        with:
+          rapidapi-key: ""
+      - name: Specwise (archived hybridforgelab repo)
+        uses: hybridforgelab/specwise-action@v1
+        with:
+          rapidapi-key: ""
