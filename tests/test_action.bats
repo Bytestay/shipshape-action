@@ -55,7 +55,7 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
   glob_match app/api/Dockerfile 'app/**/Dockerfile'
   glob_match deploy/k8s/web.yaml 'deploy/**/*.yaml'
   glob_match deploy/web.yaml 'deploy/**/*.yaml'
-  ! glob_match other/Dockerfile 'app/**/Dockerfile'
+  ! glob_match other/Dockerfile 'app/**/Dockerfile' || false
 }
 
 @test "pre-filter: no FROM, not Kubernetes, Helm, too large" {
@@ -73,8 +73,8 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
 @test "grades: F is worse than A" {
   source "$ROOT/scripts/lib.sh"
   grade_worse D C
-  ! grade_worse B C
-  ! grade_worse C C
+  ! grade_worse B C || false
+  ! grade_worse C C || false
 }
 
 # ---------- a normal run ----------
@@ -250,7 +250,7 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
   grep -qx 'https://shipshape-dockerfile-and-kubernetes-lint-api.p.rapidapi.com/v1/dockerfile' "$MOCK_DIR/lint_calls.log"
   grep -qx 'X-RapidAPI-Key: test-key' "$MOCK_DIR/lint_calls.log"
   grep -qx 'X-RapidAPI-Host: shipshape-dockerfile-and-kubernetes-lint-api.p.rapidapi.com' "$MOCK_DIR/lint_calls.log"
-  ! grep -qi 'x-api-market-key' "$MOCK_DIR/lint_calls.log"
+  ! grep -qi 'x-api-market-key' "$MOCK_DIR/lint_calls.log" || false
 }
 
 @test "an api-market-key is masked and sent to the API.market gateway" {
@@ -263,7 +263,7 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
   grep -qx 'https://prod.api.market/api/v1/bytestay/shipshape/v1/dockerfile' "$MOCK_DIR/lint_calls.log"
   grep -qx 'https://prod.api.market/api/v1/bytestay/shipshape/v1/kubernetes' "$MOCK_DIR/lint_calls.log"
   grep -qx 'x-api-market-key: am-key' "$MOCK_DIR/lint_calls.log"
-  ! grep -qi 'rapidapi' "$MOCK_DIR/lint_calls.log"
+  ! grep -qi 'rapidapi' "$MOCK_DIR/lint_calls.log" || false
 }
 
 @test "API.market bad key (HTTP 400): refused, with the API.market store link" {
@@ -290,7 +290,7 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
   INPUT_MODE=changed GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$BATS_TEST_TMPDIR/event.json" run_action
   [ "$(out requests-used)" = 1 ]
   grep -q '| `Dockerfile` | D |' "$GITHUB_STEP_SUMMARY"
-  ! grep -q 'k8s/deployment.yaml' "$GITHUB_STEP_SUMMARY"
+  ! grep -q 'k8s/deployment.yaml' "$GITHUB_STEP_SUMMARY" || false
 }
 
 @test "mode=changed without a diff (workflow_dispatch) falls back to every file" {
