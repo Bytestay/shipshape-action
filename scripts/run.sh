@@ -74,6 +74,9 @@ done <<<"$files"
 
 # 4–5. One request per file
 requests=0 quota="" all_passed=true stop=""
+# quota_429 BODY: true when a 429 is the monthly quota. RapidAPI also answers 429 to the per-second rate limit,
+# and that one says nothing about the quota.
+quota_429() { grep -qi 'quota' "$1" 2>/dev/null; }
 for c in ${candidates[@]+"${candidates[@]}"}; do
   type="${c%%|*}"; f="${c#*|}"
   if [[ -n $stop ]]; then
@@ -88,6 +91,11 @@ for c in ${candidates[@]+"${candidates[@]}"}; do
     sleep "${SHIPSHAPE_RETRY_DELAY:-5}"
     code="$(lint "$type" "$f" "$body" "$headers")"; requests=$((requests + 1))
   fi
+  tries=0 # a rate-limit 429 is retried up to 3 times
+  while [[ $code == 429 ]] && ! quota_429 "$body" && (( tries < 3 )); do
+    tries=$((tries + 1)); sleep "${SHIPSHAPE_RATE_DELAY:-$tries}"
+    code="$(lint "$type" "$f" "$body" "$headers")"; requests=$((requests + 1))
+  done
   q="$(header_value "$headers" x-ratelimit-requests-remaining)"; [[ -n $q ]] && quota="$q"
   case "$code" in
     200)
@@ -115,6 +123,11 @@ for c in ${candidates[@]+"${candidates[@]}"}; do
       all_passed=false
       ;;
     429)
+      if ! quota_429 "$body"; then
+        echo "::warning::Shipshape rate limit (HTTP 429) after 3 retries: the remaining files were not linted. Your build is not failed because of it."
+        record --arg file "$f" --arg reason "not analysed: rate limited (HTTP 429)" '{file: $file, reason: $reason}'
+        stop="rate limited"; continue
+      fi
       if [[ ${INPUT_ON_QUOTA_EXCEEDED:-warn} == fail ]]; then
         echo "::error::Shipshape monthly quota exhausted. Upgrade at $PRICING."; all_passed=false
       else
