@@ -19,7 +19,7 @@ setup() {
   echo 200 > "$MOCK_DIR/status_dockerfile"
   echo 200 > "$MOCK_DIR/status_kubernetes"
   export PATH="$ROOT/tests/bin:$PATH"
-  export INPUT_RAPIDAPI_KEY=test-key INPUT_MODE=all INPUT_FAIL_ON=high INPUT_MIN_GRADE="" INPUT_IGNORE=""
+  export INPUT_RAPIDAPI_KEY=test-key INPUT_API_MARKET_KEY="" INPUT_MODE=all INPUT_FAIL_ON=high INPUT_MIN_GRADE="" INPUT_IGNORE=""
   export INPUT_MAX_REQUESTS=10 INPUT_ON_QUOTA_EXCEEDED=warn INPUT_GITHUB_TOKEN=gh-token
   export INPUT_DOCKERFILE_PATHS="**/Dockerfile,**/*.Dockerfile,**/Dockerfile.*,**/Containerfile"
   export INPUT_KUBERNETES_PATHS="**/*.yaml,**/*.yml"
@@ -233,19 +233,55 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
 @test "no key on a pull request (fork): skipped with a warning" {
   INPUT_RAPIDAPI_KEY="" GITHUB_EVENT_NAME=pull_request run_action
   [ "$status" -eq 0 ]
-  [[ $output == *"Shipshape skipped: no rapidapi-key"* ]]
+  [[ $output == *"Shipshape skipped: no rapidapi-key or api-market-key"* ]]
 }
 
 @test "no key outside a pull request: error" {
   INPUT_RAPIDAPI_KEY="" GITHUB_EVENT_NAME=push run_action
   [ "$status" -eq 1 ]
-  [[ $output == *"::error::rapidapi-key is empty"* ]]
+  [[ $output == *"::error::No API key: set rapidapi-key or api-market-key"* ]]
+  [[ $output == *"api.market/store/bytestay/shipshape"* ]]
 }
 
-@test "the key is masked" {
+@test "the key is masked and sent as RapidAPI headers" {
   rm "$REPO/k8s/broken.yaml"
   run_action
   [[ $output == *"::add-mask::test-key"* ]]
+  grep -qx 'https://shipshape-dockerfile-and-kubernetes-lint-api.p.rapidapi.com/v1/dockerfile' "$MOCK_DIR/lint_calls.log"
+  grep -qx 'X-RapidAPI-Key: test-key' "$MOCK_DIR/lint_calls.log"
+  grep -qx 'X-RapidAPI-Host: shipshape-dockerfile-and-kubernetes-lint-api.p.rapidapi.com' "$MOCK_DIR/lint_calls.log"
+  ! grep -qi 'x-api-market-key' "$MOCK_DIR/lint_calls.log"
+}
+
+@test "an api-market-key is masked and sent to the API.market gateway" {
+  rm "$REPO/k8s/broken.yaml"
+  INPUT_RAPIDAPI_KEY="" INPUT_API_MARKET_KEY=am-key run_action
+  [[ $output == *"::add-mask::am-key"* ]]
+  [ "$(out requests-used)" = 2 ]
+  [ "$(out worst-grade)" = D ]
+  [ -z "$(out quota-remaining)" ]
+  grep -qx 'https://prod.api.market/api/v1/bytestay/shipshape/v1/dockerfile' "$MOCK_DIR/lint_calls.log"
+  grep -qx 'https://prod.api.market/api/v1/bytestay/shipshape/v1/kubernetes' "$MOCK_DIR/lint_calls.log"
+  grep -qx 'x-api-market-key: am-key' "$MOCK_DIR/lint_calls.log"
+  ! grep -qi 'rapidapi' "$MOCK_DIR/lint_calls.log"
+}
+
+@test "API.market bad key (HTTP 400): refused, with the API.market store link" {
+  echo '{"message":"Invalid x-api-market-key or x-magicapi-key defined in headers"}' > "$MOCK_DIR/body_400"
+  echo 400 > "$MOCK_DIR/status_dockerfile"
+  INPUT_RAPIDAPI_KEY="" INPUT_API_MARKET_KEY=am-key run_action
+  [ "$status" -eq 1 ]
+  [[ $output == *"Shipshape refused the key (HTTP 400: Invalid x-api-market-key"* ]]
+  [[ $output == *"https://api.market/store/bytestay/shipshape"* ]]
+  [ "$(requests)" -eq 1 ]
+  grep -q 'not analysed: key refused (HTTP 400)' "$GITHUB_STEP_SUMMARY"
+}
+
+@test "both keys set: fails early" {
+  INPUT_API_MARKET_KEY=am-key run_action
+  [ "$status" -eq 1 ]
+  [[ $output == *"Set rapidapi-key or api-market-key, not both."* ]]
+  [ ! -f "$MOCK_DIR/requests.log" ]
 }
 
 @test "mode=changed on a pull request lints only the files the PR changed" {

@@ -6,7 +6,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib.sh
 source "$HERE/lib.sh"
 
-PRICING="https://rapidapi.com/bytestay-bytestay-default/api/shipshape-dockerfile-and-kubernetes-lint-api/pricing"
+RAPIDAPI_PRICING="https://rapidapi.com/bytestay-bytestay-default/api/shipshape-dockerfile-and-kubernetes-lint-api/pricing"
+API_MARKET_PRICING="https://api.market/store/bytestay/shipshape"
+# The marketplace follows the key that is set: RapidAPI or API.market (set only one)
+MARKET=rapidapi PRICING="$RAPIDAPI_PRICING"
+if [[ -n ${INPUT_API_MARKET_KEY:-} ]]; then MARKET=api.market PRICING="$API_MARKET_PRICING"; fi
 OUT="${GITHUB_OUTPUT:-/dev/null}"
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 WORK="$(mktemp -d)"
@@ -30,16 +34,20 @@ if [[ -n $MIN_GRADE && ! $MIN_GRADE =~ ^[A-F]$ ]]; then echo "::error::min-grade
 MAX_REQ="${INPUT_MAX_REQUESTS:-10}"
 [[ $MAX_REQ =~ ^[0-9]+$ ]] || { echo "::error::max-requests must be a whole number."; exit 1; }
 
-if [[ -z ${INPUT_RAPIDAPI_KEY:-} && -z ${SHIPSHAPE_AUTH_HEADER:-} ]]; then
+if [[ -n ${INPUT_RAPIDAPI_KEY:-} && -n ${INPUT_API_MARKET_KEY:-} ]]; then
+  echo "::error::Set rapidapi-key or api-market-key, not both."; exit 1
+fi
+if [[ -z ${INPUT_RAPIDAPI_KEY:-}${INPUT_API_MARKET_KEY:-} && -z ${SHIPSHAPE_AUTH_HEADER:-} ]]; then
   if [[ ${GITHUB_EVENT_NAME:-} == pull_request* ]]; then
-    echo "::warning::Shipshape skipped: no rapidapi-key. Pull requests from forks don't get repository secrets."
+    echo "::warning::Shipshape skipped: no rapidapi-key or api-market-key. Pull requests from forks don't get repository secrets."
     output passed true; output requests-used 0
     exit 0
   fi
-  echo "::error::rapidapi-key is empty. Subscribe to the Shipshape API (free Basic plan) at $PRICING and store the key as a secret."
+  echo "::error::No API key: set rapidapi-key or api-market-key. Subscribe to the Shipshape API (free Basic plan) at $RAPIDAPI_PRICING or $API_MARKET_PRICING and store the key as a secret."
   exit 1
 fi
 [[ -n ${INPUT_RAPIDAPI_KEY:-} ]] && echo "::add-mask::$INPUT_RAPIDAPI_KEY"
+[[ -n ${INPUT_API_MARKET_KEY:-} ]] && echo "::add-mask::$INPUT_API_MARKET_KEY"
 
 # 2. Discover files
 mode="${INPUT_MODE:-changed}"
@@ -97,7 +105,9 @@ for c in ${candidates[@]+"${candidates[@]}"}; do
     code="$(lint "$type" "$f" "$body" "$headers")"; requests=$((requests + 1))
   done
   q="$(header_value "$headers" x-ratelimit-requests-remaining)"; [[ -n $q ]] && quota="$q"
-  case "$code" in
+  kind="$code" # the API.market gateway answers 400 to a missing or wrong key
+  if [[ $code == 400 ]] && grep -qi 'api-market-key' "$body" 2>/dev/null; then kind=401; fi
+  case "$kind" in
     200)
       p="$(jq -r '.passed' "$body")"; grade="$(jq -r '.grade' "$body")"
       ok=true; [[ $p == true ]] || ok=false
@@ -107,7 +117,7 @@ for c in ${candidates[@]+"${candidates[@]}"}; do
       ;;
     401|403)
       msg="$(jq -r '.message // empty' "$body" 2>/dev/null || true)"
-      echo "::error::Shipshape refused the key (HTTP $code${msg:+: $msg}). Subscribe (free Basic plan) at $PRICING."
+      echo "::error::Shipshape refused the key (HTTP $code${msg:+: $msg}). Subscribe (free plan) at $PRICING."
       record --arg file "$f" --arg reason "not analysed: key refused (HTTP $code)" '{file: $file, reason: $reason}'
       all_passed=false; stop="key refused"
       ;;
