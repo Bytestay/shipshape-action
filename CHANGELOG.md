@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/Bytestay/shipshape-action/compare/v1.1.0...v1.1.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* escape API text in workflow commands ([#15](https://github.com/Bytestay/shipshape-action/issues/15)) ([25edd98](https://github.com/Bytestay/shipshape-action/commit/25edd98a94d0e2f71b54139dd639cbd7f7d7d36a))
+
 ## [1.1.0](https://github.com/Bytestay/shipshape-action/compare/v1.0.6...v1.1.0) (2026-11-09)
 
 
