@@ -12,5 +12,5 @@ def rank: {high: 0, medium: 1, low: 2, info: 3}[.severity] // 4;
 | flatten
 | sort_by(rank)
 | .[]
-| "::\(level) file=\(.file | esc_prop)\(if .line then ",line=\(.line)" else "" end),title=\("\(.id) \(.title)" | esc_prop)::"
+| "::\(level) file=\(.file | esc_prop)\(if (.line | type) == "number" then ",line=\(.line | floor)" else "" end),title=\("\(.id) \(.title)" | esc_prop)::"
   + ("\(.detail // "")\(if .fix then "\nFix: \(.fix)" else "" end)" | esc_data)

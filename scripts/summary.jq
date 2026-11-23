@@ -1,25 +1,31 @@
 # Input: {results: [...], passed, requests, quota, fail_on, min_grade}. Output: Markdown for $GITHUB_STEP_SUMMARY.
-def cell: tostring | gsub("\\|"; "\\|") | gsub("\n"; " ");
+# cell: untrusted text for a Markdown table cell. HTML specials and backticks become entities, | is escaped,
+# newlines become spaces. Code is written as <code>, never as a backtick span, so nothing can close it early.
+def cell: tostring | gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;") | gsub("`"; "&#96;")
+  | gsub("\\|"; "\\|") | gsub("\r?\n|\r"; " ");
+def code: "<code>\(cell)</code>";
+def num: if type == "number" then . else 0 end;
+def link($text): if (. | type) == "string" and test("^https://[^\\s()<>\\[\\]]*$") then "[\($text | cell)](\(.))" else ($text | cell) end;
 def icon: if . then "✅" else "❌" end;
 def sev: {high: "🔴 high", medium: "🟠 medium", low: "🟡 low", info: "⚪ info"}[.] // .;
 
 ([.results[] | select(.report)]) as $ok
 | ([.results[] | select(.report | not)]) as $other
 | "## Shipshape \(.passed | icon)\n",
-  "Fail on: `\(.fail_on)`\(if .min_grade != "" then " · minimum grade: `\(.min_grade)`" else "" end)"
+  "Fail on: \(.fail_on | code)\(if .min_grade != "" then " · minimum grade: \(.min_grade | code)" else "" end)"
   + " · requests used: \(.requests)\(if .quota != "" then " · quota left this month: \(.quota)" else "" end)",
   "",
   (if ($ok | length) > 0 then
     "| File | Grade | Score | High | Medium | Low | Info | Passed |",
     "|---|---|---|---|---|---|---|---|",
-    ($ok[] | "| `\(.file | cell)` | \(.report.grade) | \(.report.score) | \(.report.summary.high) | \(.report.summary.medium) | \(.report.summary.low) | \(.report.summary.info) | \(.passed | icon) |"),
+    ($ok[] | "| \(.file | code) | \(.report.grade | cell) | \(.report.score | cell) | \(.report.summary.high | num) | \(.report.summary.medium | num) | \(.report.summary.low | num) | \(.report.summary.info | num) | \(.passed | icon) |"),
     "",
     ($ok[] | select((.report.findings | length) > 0)
-      | "<details><summary><code>\(.file)</code>: \(.report.findings | length) findings</summary>",
+      | "<details><summary>\(.file | code): \(.report.findings | length) findings</summary>",
         "",
         "| Severity | Rule | Line | Finding | Fix |",
         "|---|---|---|---|---|",
-        (.report.findings[] | "| \(.severity | sev) | [\(.id)](\(.url // "")) | \(.line // "") | \(.title | cell) | \(.fix // "" | cell) |"),
+        (.report.findings[] | "| \(.severity | sev) | \(. as $f | $f.url // "" | link($f.id)) | \(if (.line | type) == "number" then .line | floor else "" end) | \(.title | cell) | \(.fix // "" | cell) |"),
         "",
         "</details>",
         "")
@@ -29,6 +35,6 @@ def sev: {high: "🔴 high", medium: "🟠 medium", low: "🟡 low", info: "⚪ 
     "",
     "| File | Why |",
     "|---|---|",
-    ($other[] | "| `\(.file | cell)` | \(.reason | cell) |"),
+    ($other[] | "| \(.file | code) | \(.reason | cell) |"),
     ""
   else empty end)
