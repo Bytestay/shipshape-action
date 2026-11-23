@@ -26,13 +26,14 @@ setup() {
   export INPUT_EXCLUDE_PATHS=".github/**,**/templates/**,**/docker-compose*.y*ml,**/compose*.y*ml"
   export GITHUB_OUTPUT="$BATS_TEST_TMPDIR/output" GITHUB_STEP_SUMMARY="$BATS_TEST_TMPDIR/summary.md"
   export GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REPOSITORY=acme/app GITHUB_API_URL=https://api.github.com
-  export SHIPSHAPE_RETRY_DELAY=0 SHIPSHAPE_RATE_DELAY=0
+  export SHIPSHAPE_TEST_HARNESS=1 SHIPSHAPE_RETRY_DELAY=0 SHIPSHAPE_RATE_DELAY=0
   unset SHIPSHAPE_API_URL SHIPSHAPE_AUTH_HEADER
   : > "$GITHUB_OUTPUT"; : > "$GITHUB_STEP_SUMMARY"
 }
 
 run_action() { cd "$REPO" && run "$ROOT/scripts/run.sh"; }
-out() { grep "^$1=" "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-; }
+# step outputs are in the heredoc form: NAME<<DELIM, the value, DELIM
+out() { awk -v n="$1" '$0 ~ "^" n "<<" { getline v; val = v } END { print val }' "$GITHUB_OUTPUT"; }
 requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
 
 # ---------- classification and pre-filter ----------
@@ -93,8 +94,8 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
   [[ $output == *"::error file=Dockerfile,line=1,title=DF-001 Final stage never sets USER%2C so the container runs as root::"* ]]
   [[ $output == *"::warning file=k8s/deployment.yaml,line=18,title=K8S-009"* ]]
   [ "$(grep -c '^::notice' <<<"$output")" -eq 10 ]   # capped: GitHub shows at most 10 per level
-  grep -q '| `Dockerfile` | D | 54 | 1 | 1 | 6 | 2 | ❌ |' "$GITHUB_STEP_SUMMARY"
-  grep -q '| `broken/Dockerfile` | skipped: no FROM instruction |' "$GITHUB_STEP_SUMMARY"
+  grep -q '| <code>Dockerfile</code> | D | 54 | 1 | 1 | 6 | 2 | ❌ |' "$GITHUB_STEP_SUMMARY"
+  grep -q '| <code>broken/Dockerfile</code> | skipped: no FROM instruction |' "$GITHUB_STEP_SUMMARY"
   grep -q 'quota left this month: 41' "$GITHUB_STEP_SUMMARY"
   [[ $output == *"::error title=Shipshape check failed::1 of 2 analysed file(s) failed (fail-on: high)."* ]]
 }
@@ -289,7 +290,7 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
   echo '[{"filename":"Dockerfile","status":"modified"},{"filename":"k8s/deployment.yaml","status":"removed"},{"filename":"README.md","status":"added"}]' > "$MOCK_DIR/github.json"
   INPUT_MODE=changed GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$BATS_TEST_TMPDIR/event.json" run_action
   [ "$(out requests-used)" = 1 ]
-  grep -q '| `Dockerfile` | D |' "$GITHUB_STEP_SUMMARY"
+  grep -q '| <code>Dockerfile</code> | D |' "$GITHUB_STEP_SUMMARY"
   ! grep -q 'k8s/deployment.yaml' "$GITHUB_STEP_SUMMARY" || false
 }
 
@@ -306,4 +307,80 @@ requests() { grep -c . "$MOCK_DIR/requests.log" 2>/dev/null || echo 0; }
   INPUT_MAX_REQUESTS=ten run_action;   [ "$status" -eq 1 ]; [[ $output == *"max-requests must be"* ]]
   INPUT_MODE=some run_action;          [ "$status" -eq 1 ]; [[ $output == *"mode must be"* ]]
   INPUT_ON_QUOTA_EXCEEDED=x run_action; [ "$status" -eq 1 ]; [[ $output == *"on-quota-exceeded must be"* ]]
+}
+
+# ---------- API text in workflow commands, outputs and Markdown ----------
+
+EVIL=$'bad\n::add-mask::pwned\n::set-output name=x::y %0A'
+
+@test "401 message with a newline and ::add-mask:: is escaped in the workflow command" {
+  echo 401 > "$MOCK_DIR/status_dockerfile"
+  jq -nc --arg m "$EVIL" '{message: $m}' > "$MOCK_DIR/body_401"
+  run_action
+  [ "$status" -eq 1 ]
+  [[ $output == *"HTTP 401: bad%0A::add-mask::pwned%0A::set-output name=x::y %250A"* ]]
+  ! grep -q '^::add-mask::pwned' <<<"$output" || false
+  ! grep -q '^::set-output' <<<"$output" || false
+  grep -qx '::add-mask::test-key' <<<"$output"
+}
+
+@test "a 422 detail with workflow commands is escaped" {
+  echo 422 > "$MOCK_DIR/status_kubernetes"
+  jq -nc --arg m "$EVIL line 9" '{detail: $m}' > "$MOCK_DIR/body_422"
+  run_action
+  [[ $output == *"title=Shipshape could not parse this file::bad%0A::add-mask::pwned%0A::set-output name=x::y %250A line 9"* ]]
+  ! grep -q '^::add-mask::pwned' <<<"$output" || false
+  ! grep -q '^::set-output' <<<"$output" || false
+}
+
+@test "finding text with workflow commands and Markdown is escaped in annotations and summary" {
+  jq --arg m "$EVIL <img src=x> a|b \`c\`" \
+    '.findings[0].detail = $m | .findings[0].fix = $m | .findings[0].title = $m | .findings[0].line = "9,file=evil"
+     | .findings[0].url = "javascript:alert(1)" | .grade = $m' \
+    "$ROOT/tests/responses/dockerfile_200.json" > "$MOCK_DIR/body_200_dockerfile"
+  run_action
+  ! grep -q '^::add-mask::pwned' <<<"$output" || false
+  ! grep -q '^::set-output' <<<"$output" || false
+  grep -q '^::error file=Dockerfile,title=DF-001 bad%0A%3A%3Aadd-mask%3A%3Apwned' <<<"$output"
+  ! grep -q '<img' "$GITHUB_STEP_SUMMARY" || false
+  grep -qF '&lt;img src=x&gt; a\|b &#96;c&#96;' "$GITHUB_STEP_SUMMARY"
+  ! grep -q 'javascript:' "$GITHUB_STEP_SUMMARY" || false
+  [ "$(grep -c '^::' "$GITHUB_STEP_SUMMARY" || true)" = 0 ]
+}
+
+@test "a file name with a comma or :: cannot forge annotation properties" {
+  source "$ROOT/scripts/lib.sh"
+  run wf_file warning $'a,b:c::d\ne' "100%"
+  [ "$output" = "::warning file=a%2Cb%3Ac%3A%3Ad%0Ae::100%25" ]
+}
+
+@test "outputs use the heredoc form with a random delimiter, and a hostile quota header is dropped" {
+  echo '5x%0A::add-mask::x' > "$MOCK_DIR/quota"
+  run_action
+  ! grep -q '^[a-z-]*=' "$GITHUB_OUTPUT" || false
+  [ "$(grep -c '<<ghadelim_' "$GITHUB_OUTPUT")" = 6 ]
+  [ -z "$(out quota-remaining)" ]
+  [ "$(out passed)" = false ]
+}
+
+@test "a tracked symlink is not linted" {
+  cd "$REPO"; ln -s /etc/hosts k8s/link.yaml; git add -A; git -c user.email=t@t -c user.name=t commit -qm link
+  run "$ROOT/scripts/run.sh"
+  [[ $output != *link.yaml* ]]
+  grep -q 'link.yaml' "$GITHUB_STEP_SUMMARY" # listed as not analysed, never sent
+  ! grep -q 'localhost' "$MOCK_DIR/requests.log" || false
+}
+
+@test "keys are not on curl's command line" {
+  run_action
+  [ -s "$MOCK_DIR/argv.log" ]
+  ! grep -q 'test-key\|gh-token' "$MOCK_DIR/argv.log" || false
+  grep -qx 'X-RapidAPI-Key: test-key' "$MOCK_DIR/lint_calls.log"
+}
+
+@test "test overrides are ignored outside the test harness" {
+  export SHIPSHAPE_TEST_HARNESS=0 SHIPSHAPE_API_URL=http://evil.example SHIPSHAPE_AUTH_HEADER="X-Evil: 1"
+  run_action
+  ! grep -q evil "$MOCK_DIR/lint_calls.log" || false
+  grep -q 'https://shipshape-dockerfile-and-kubernetes-lint-api.p.rapidapi.com/v1/dockerfile' "$MOCK_DIR/lint_calls.log"
 }

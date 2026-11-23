@@ -18,52 +18,51 @@ trap 'rm -rf "$WORK"' EXIT
 RESULTS="$WORK/results.jsonl"
 : > "$RESULTS"
 
-output() { printf '%s=%s\n' "$1" "$2" >> "$OUT"; }
 record() { jq -cn "$@" >> "$RESULTS"; } # one JSON object per file
 
 # 1. Preflight
 for tool in curl jq git; do
-  command -v "$tool" >/dev/null || { echo "::error::Shipshape needs $tool on the runner."; exit 1; }
+  command -v "$tool" >/dev/null || { wf error "Shipshape needs $tool on the runner."; exit 1; }
 done
 case "${INPUT_FAIL_ON:-high}" in high|medium|low|info|never) ;; *)
-  echo "::error::fail-on must be high, medium, low, info or never (got '${INPUT_FAIL_ON}')."; exit 1;; esac
+  wf error "fail-on must be high, medium, low, info or never (got '${INPUT_FAIL_ON}')."; exit 1;; esac
 case "${INPUT_ON_QUOTA_EXCEEDED:-warn}" in warn|fail) ;; *)
-  echo "::error::on-quota-exceeded must be warn or fail."; exit 1;; esac
+  wf error "on-quota-exceeded must be warn or fail."; exit 1;; esac
 MIN_GRADE="$(printf '%s' "${INPUT_MIN_GRADE:-}" | tr '[:lower:]' '[:upper:]')"
-if [[ -n $MIN_GRADE && ! $MIN_GRADE =~ ^[A-F]$ ]]; then echo "::error::min-grade must be one of A–F."; exit 1; fi
+if [[ -n $MIN_GRADE && ! $MIN_GRADE =~ ^[A-F]$ ]]; then wf error "min-grade must be one of A–F."; exit 1; fi
 MAX_REQ="${INPUT_MAX_REQUESTS:-10}"
-[[ $MAX_REQ =~ ^[0-9]+$ ]] || { echo "::error::max-requests must be a whole number."; exit 1; }
+[[ $MAX_REQ =~ ^[0-9]+$ ]] || { wf error "max-requests must be a whole number."; exit 1; }
 
 if [[ -n ${INPUT_RAPIDAPI_KEY:-} && -n ${INPUT_API_MARKET_KEY:-} ]]; then
-  echo "::error::Set rapidapi-key or api-market-key, not both."; exit 1
+  wf error "Set rapidapi-key or api-market-key, not both."; exit 1
 fi
 if [[ -z ${INPUT_RAPIDAPI_KEY:-}${INPUT_API_MARKET_KEY:-} && -z ${SHIPSHAPE_AUTH_HEADER:-} ]]; then
   if [[ ${GITHUB_EVENT_NAME:-} == pull_request* ]]; then
-    echo "::warning::Shipshape skipped: no rapidapi-key or api-market-key. Pull requests from forks don't get repository secrets."
+    wf warning "Shipshape skipped: no rapidapi-key or api-market-key. Pull requests from forks don't get repository secrets."
     output passed true; output requests-used 0
     exit 0
   fi
-  echo "::error::No API key: set rapidapi-key or api-market-key. Subscribe to the Shipshape API (free Basic plan) at $RAPIDAPI_PRICING or $API_MARKET_PRICING and store the key as a secret."
+  wf error "No API key: set rapidapi-key or api-market-key. Subscribe to the Shipshape API (free Basic plan) at $RAPIDAPI_PRICING or $API_MARKET_PRICING and store the key as a secret."
   exit 1
 fi
-[[ -n ${INPUT_RAPIDAPI_KEY:-} ]] && echo "::add-mask::$INPUT_RAPIDAPI_KEY"
-[[ -n ${INPUT_API_MARKET_KEY:-} ]] && echo "::add-mask::$INPUT_API_MARKET_KEY"
+[[ -n ${INPUT_RAPIDAPI_KEY:-} ]] && wf add-mask "$INPUT_RAPIDAPI_KEY"
+[[ -n ${INPUT_API_MARKET_KEY:-} ]] && wf add-mask "$INPUT_API_MARKET_KEY"
 
 # 2. Discover files
 mode="${INPUT_MODE:-changed}"
 if [[ $mode == changed ]]; then
   set +e; files="$(changed_files)"; rc=$?; set -e
   if [[ $rc -eq 2 ]]; then
-    echo "::notice::No pull request or push diff for this event: linting every matching file."
+    wf notice "No pull request or push diff for this event: linting every matching file."
     files="$(all_files)"
   elif [[ $rc -ne 0 ]]; then
-    echo "::warning::Couldn't list the changed files (GitHub API): linting every matching file."
+    wf warning "Couldn't list the changed files (GitHub API): linting every matching file."
     files="$(all_files)"
   fi
 elif [[ $mode == all ]]; then
   files="$(all_files)"
 else
-  echo "::error::mode must be changed or all."; exit 1
+  wf error "mode must be changed or all."; exit 1
 fi
 
 # 3. Local pre-filter (no request spent)
@@ -104,7 +103,7 @@ for c in ${candidates[@]+"${candidates[@]}"}; do
     tries=$((tries + 1)); sleep "${SHIPSHAPE_RATE_DELAY:-$tries}"
     code="$(lint "$type" "$f" "$body" "$headers")"; requests=$((requests + 1))
   done
-  q="$(header_value "$headers" x-ratelimit-requests-remaining)"; [[ -n $q ]] && quota="$q"
+  q="$(header_value "$headers" x-ratelimit-requests-remaining)"; [[ $q =~ ^[0-9]{1,9}$ ]] && quota="$q"
   kind="$code" # the API.market gateway answers 400 to a missing or wrong key
   if [[ $code == 400 ]] && grep -qi 'api-market-key' "$body" 2>/dev/null; then kind=401; fi
   case "$kind" in
@@ -116,38 +115,38 @@ for c in ${candidates[@]+"${candidates[@]}"}; do
       record --arg file "$f" --argjson passed "$ok" --slurpfile r "$body" '{file: $file, passed: $passed, report: $r[0]}'
       ;;
     401|403)
-      msg="$(jq -r '.message // empty' "$body" 2>/dev/null || true)"
-      echo "::error::Shipshape refused the key (HTTP $code${msg:+: $msg}). Subscribe (free plan) at $PRICING."
+      msg="$(jq -r '.message // empty | tostring' "$body" 2>/dev/null || true)"; msg="${msg:0:200}"
+      wf error "Shipshape refused the key (HTTP $code${msg:+: $msg}). Subscribe (free plan) at $PRICING."
       record --arg file "$f" --arg reason "not analysed: key refused (HTTP $code)" '{file: $file, reason: $reason}'
       all_passed=false; stop="key refused"
       ;;
     413)
-      echo "::warning file=$f::Shipshape skipped this file: request too large."
+      wf_file warning "$f" "Shipshape skipped this file: request too large."
       record --arg file "$f" --arg reason "skipped: request too large (HTTP 413)" '{file: $file, reason: $reason}'
       ;;
     422)
       detail="$(jq -r '.detail | if type == "string" then . else tostring end' "$body" 2>/dev/null || echo "invalid input")"
       line="$(grep -oE 'line [0-9]+' <<<"$detail" | head -1 | grep -oE '[0-9]+' || true)"
-      echo "::error file=$f${line:+,line=$line},title=Shipshape could not parse this file::$detail"
+      wf_at error "$f" "$line" "Shipshape could not parse this file" "$detail"
       record --arg file "$f" --arg reason "invalid: $detail" '{file: $file, reason: $reason}'
       all_passed=false
       ;;
     429)
       if ! quota_429 "$body"; then
-        echo "::warning::Shipshape rate limit (HTTP 429) after 3 retries: the remaining files were not linted. Your build is not failed because of it."
+        wf warning "Shipshape rate limit (HTTP 429) after 3 retries: the remaining files were not linted. Your build is not failed because of it."
         record --arg file "$f" --arg reason "not analysed: rate limited (HTTP 429)" '{file: $file, reason: $reason}'
         stop="rate limited"; continue
       fi
       if [[ ${INPUT_ON_QUOTA_EXCEEDED:-warn} == fail ]]; then
-        echo "::error::Shipshape monthly quota exhausted. Upgrade at $PRICING."; all_passed=false
+        wf error "Shipshape monthly quota exhausted. Upgrade at $PRICING."; all_passed=false
       else
-        echo "::warning::Shipshape monthly quota exhausted: the remaining files were not linted. Upgrade at $PRICING."
+        wf warning "Shipshape monthly quota exhausted: the remaining files were not linted. Upgrade at $PRICING."
       fi
       record --arg file "$f" --arg reason "not analysed: quota exhausted (HTTP 429)" '{file: $file, reason: $reason}'
       stop="quota exhausted"
       ;;
     *)
-      echo "::warning::Shipshape API unavailable (HTTP $code): the remaining files were not linted. Your build is not failed because of it."
+      wf warning "Shipshape API unavailable (HTTP $code): the remaining files were not linted. Your build is not failed because of it."
       record --arg file "$f" --arg reason "not analysed: API unavailable (HTTP $code)" '{file: $file, reason: $reason}'
       stop="API unavailable"
       ;;
@@ -159,7 +158,7 @@ jq -s '[.[] | select(.report)]' "$RESULTS" | jq -r -f "$HERE/annotate.jq"
 
 # 7. Summary
 if [[ -n $quota && $quota =~ ^[0-9]+$ ]] && (( quota < 3 )); then
-  echo "::warning::Only $quota Shipshape requests left this month. Plans: $PRICING"
+  wf warning "Only $quota Shipshape requests left this month. Plans: $PRICING"
 fi
 jq -s --argjson passed "$all_passed" --arg requests "$requests" --arg quota "$quota" \
   --arg fail_on "${INPUT_FAIL_ON:-high}" --arg min_grade "$MIN_GRADE" \
@@ -188,7 +187,7 @@ if [[ $all_passed != true ]]; then
   (( n_invalid > 0 )) && why+=("$n_invalid file(s) could not be parsed")
   if (( ${#why[@]} > 0 )); then
     msg="$(IFS='; '; echo "${why[*]}")"
-    echo "::error title=Shipshape check failed::$msg. The job summary lists every finding with its fix."
+    printf '::error title=Shipshape check failed::%s\n' "$(esc_data "$msg. The job summary lists every finding with its fix.")"
   fi
 fi
 [[ $all_passed == true ]]

@@ -5,13 +5,14 @@
 #   quota          value of x-ratelimit-requests-remaining (optional)
 # GitHub API calls answer with $MOCK_DIR/github.json. Every request body is appended to $MOCK_DIR/requests.log,
 # and each lint call's URL and headers to $MOCK_DIR/lint_calls.log.
+printf '%s\n' "$@" >> "$MOCK_DIR/argv.log" # what a process listing would show
 out="" headers="" url="" fmt="" data="" hdrs=()
 while (($#)); do
   case "$1" in
     -o) out="$2"; shift ;;
     -D) headers="$2"; shift ;;
     -w) fmt="$2"; shift ;;
-    -H) hdrs+=("$2"); shift ;;
+    -H) if [[ $2 == @* ]]; then while IFS= read -r l; do hdrs+=("$l"); done < "${2#@}"; else hdrs+=("$2"); fi; shift ;;
     -X|--max-time) shift ;;
     --data-binary) data="$2"; shift ;;
     http*) url="$1" ;;
